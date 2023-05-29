@@ -83,7 +83,7 @@ int main()
     x_current[0] = 0;
     x_current[1] = 0;
     x_current[2] = 0;
-    x_current[3] = 0;
+    x_current[3] = 0.000999999916666679;
     x_current[4] = 0;
     x_current[5] = 0;
     x_current[6] = 0;

@@ -16,7 +16,8 @@ from fancy_plots import fancy_plots_2, fancy_plots_1
 import rospy
 from scipy.spatial.transform import Rotation as R
 from nav_msgs.msg import Odometry
-from c_generated_code.acados_ocp_solver_pyx import AcadosOcpSolverCython
+#from c_generated_code.acados_ocp_solver_pyx import AcadosOcpSolverCython
+from geometry_msgs.msg import Twist
 
 # Global variables Odometry Drone
 x_real = 0.0
@@ -322,7 +323,7 @@ def create_ocp_solver_description(x0, N_horizon, t_horizon, zp_max, zp_min, phi_
     ocp.dims.N = N_horizon
 
     # set cost
-    Q_mat = 1 * np.diag([2, 1, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # [x,th,dx,dth]
+    Q_mat = 1 * np.diag([0.2, 0.2, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # [x,th,dx,dth]
     R_mat = 1 * np.diag([(1/zp_max),  (1/phi_max), (1/theta_max), (1/psi_max)])
 
     ocp.cost.cost_type = "LINEAR_LS"
@@ -371,13 +372,32 @@ def get_odometry(pose, velocity):
     linear_velocity = [velocity[0,0], velocity[0,1], velocity[0,2]]
     angular_velocity = [velocity[0,3], velocity[0,4], velocity[0,5]]
     state = np.array([displacement[0], displacement[1], displacement[2], euler[0], euler[1], euler[2], linear_velocity[0], linear_velocity[1], linear_velocity[2], angular_velocity[0], angular_velocity[1], angular_velocity[2]])
-    print(state)
+    return state
+
+def send_velocity_control(u, vel_pub, vel_msg):
+    # Split  control values
+    F = u[0]
+    tx = u[1]
+    ty = u[2]
+    tz = u[3]
+
+    # velocity message
+    vel_msg.linear.x = 0.0
+    vel_msg.linear.y = 0.0
+    vel_msg.linear.z = F
+
+    vel_msg.angular.x = tx
+    vel_msg.angular.y = ty
+    vel_msg.angular.z = tz
+
+    # Publish control values
+    vel_pub.publish(vel_msg)
     return None
 
-def main():
+def main(vel_pub, vel_msg):
     # Initial Values System
     # Simulation Time
-    t_final = 30
+    t_final = 60
     # Sample time
     t_s = 0.03
     # Prediction Time
@@ -414,11 +434,14 @@ def main():
     data_pose = np.array([[x_real, y_real, z_real, qx_real, qy_real, qz_real, qw_real]], dtype=np.double)
     data_velocity = np.array([[vx_real, vy_real, vz_real, wx_real, wy_real, wz_real]], dtype=np.double)
 
+    # Read Real data
+    x[:, 0] = get_odometry(data_pose, data_velocity)
+
     # Reference Signal of the system
     xref = np.zeros((16, t.shape[0]), dtype = np.double)
-    xref[0,:] = 4 * np.sin(1*t)+3;
-    xref[1,:] =  4 * np.sin(1.5*t);
-    xref[2,:] = 2.5 * np.sin (1* t) +5 
+    xref[0,:] = 8 * np.sin(20*0.04*t)+3;
+    xref[1,:] =  8 * np.sin(20*0.08*t);
+    xref[2,:] = 2.5 * np.sin (0.2* t) +5 
     xref[5,:] = 0*np.pi/180
     # Initial Control values
     u_control = np.zeros((4, t.shape[0]-N_prediction), dtype = np.double)
@@ -426,9 +449,9 @@ def main():
 
     # Limits Control values
     zp_ref_max = 3
-    phi_max = 0.5
-    theta_max = 0.5
-    psi_max = 0.5
+    phi_max = 0.8
+    theta_max = 0.8
+    psi_max = 0.8
 
     zp_ref_min = -zp_ref_max
     phi_min = -phi_max
@@ -442,10 +465,10 @@ def main():
     #acados_ocp_solver = AcadosOcpSolver(ocp, json_file="acados_ocp_" + ocp.model.name + ".json", build= True, generate= True)
 
     solver_json = 'acados_ocp_' + model.name + '.json'
-    #AcadosOcpSolver.generate(ocp, json_file=solver_json)
-    #AcadosOcpSolver.build(ocp.code_export_directory, with_cython=True)
-    #acados_ocp_solver = AcadosOcpSolver.create_cython_solver(solver_json)
-    acados_ocp_solver = AcadosOcpSolverCython(ocp.model.name, ocp.solver_options.nlp_solver_type, ocp.dims.N)
+    AcadosOcpSolver.generate(ocp, json_file=solver_json)
+    AcadosOcpSolver.build(ocp.code_export_directory, with_cython=True)
+    acados_ocp_solver = AcadosOcpSolver.create_cython_solver(solver_json)
+    #acados_ocp_solver = AcadosOcpSolverCython(ocp.model.name, ocp.solver_options.nlp_solver_type, ocp.dims.N)
 
     nx = ocp.model.x.size()[0]
     nu = ocp.model.u.size()[0]
@@ -458,6 +481,7 @@ def main():
     # Simulation System
 
     for k in range(0, t.shape[0]-N_prediction):
+        tic = time.time()
         # Control Law Section
         acados_ocp_solver.set(0, "lbx", x[:,k])
         acados_ocp_solver.set(0, "ubx", x[:,k])
@@ -470,21 +494,32 @@ def main():
         acados_ocp_solver.set(N_prediction, "yref", yref_N[0:12])
 
         # Get Computational Time
-        data_pose = np.array([[x_real, y_real, z_real, qx_real, qy_real, qz_real, qw_real]], dtype=np.double)
-        data_velocity = np.array([[vx_real, vy_real, vz_real, wx_real, wy_real, wz_real]], dtype=np.double)
-        get_odometry(data_pose, data_velocity)
-        tic = time.time()
         status = acados_ocp_solver.solve()
 
-        toc = time.time()- tic
-        print(toc)
+        toc_solver = time.time()- tic
 
         # Get Control Signal
         u_control[:, k] = acados_ocp_solver.get(0, "u")
+        print(u_control[:, k])
+        send_velocity_control(u_control[:, k], vel_pub, vel_msg)
+
+        # Send Control values
+
+
 
         # System Evolution
-        x[:, k+1] = f_d(x[:, k], u_control[:, k], t_s, f)
-        delta_t[:, k] = toc
+        #x[:, k+1] = f_d(x[:, k], u_control[:, k], t_s, f)
+        data_pose = np.array([[x_real, y_real, z_real, qx_real, qy_real, qz_real, qw_real]], dtype=np.double)
+        data_velocity = np.array([[vx_real, vy_real, vz_real, wx_real, wy_real, wz_real]], dtype=np.double)
+        x[:, k+1] = get_odometry(data_pose, data_velocity)
+        delta_t[:, k] = toc_solver
+        while (time.time() - tic <= t_s):
+                None
+        toc = time.time() - tic 
+        print(toc)
+    send_velocity_control([0, 0, 0, 0], vel_pub, vel_msg)
+
+
 
     fig1, ax11 = fancy_plots_1()
     states_x, = ax11.plot(t[0:x.shape[1]], x[0,:],
@@ -571,9 +606,14 @@ if __name__ == '__main__':
         # Node Initialization
         rospy.init_node("Acados_controller",disable_signals=True, anonymous=True)
 
-        odometry_topic = "/drone/odometry"
+        odometry_topic = "/dji_sdk/odometry"
         velocity_subscriber = rospy.Subscriber(odometry_topic, Odometry, odometry_call_back)
-        main()
+        
+        velocity_topic = "/m100/velocityControl"
+        velocity_message = Twist()
+        velocity_publisher = rospy.Publisher(velocity_topic, Twist, queue_size=10)
+
+        main(velocity_publisher, velocity_message)
     except(rospy.ROSInterruptException, KeyboardInterrupt):
         print("Error System")
         pass
