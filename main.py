@@ -439,8 +439,8 @@ def main(vel_pub, vel_msg):
 
     # Reference Signal of the system
     xref = np.zeros((16, t.shape[0]), dtype = np.double)
-    xref[0,:] = 8 * np.sin(20*0.04*t)+3;
-    xref[1,:] =  8 * np.sin(20*0.08*t);
+    xref[0,:] = 4 * np.sin(18*0.04*t)+3;
+    xref[1,:] =  4 * np.sin(18*0.08*t);
     xref[2,:] = 2.5 * np.sin (0.2* t) +5 
     xref[5,:] = 0*np.pi/180
     # Initial Control values
